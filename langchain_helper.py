@@ -12,7 +12,11 @@ from few_shots import few_shots
 
 import os
 from dotenv import load_dotenv
+import logging
+
 load_dotenv()  # take environment variables from .env (especially openai api key)
+
+logging.basicConfig(level=logging.DEBUG)
 
 def get_few_shot_db_chain():
     db_user = "sql12723901"
@@ -20,24 +24,40 @@ def get_few_shot_db_chain():
     db_host = "sql12.freesqldatabase.com"
     db_name = "sql12723901"
 
-    db = SQLDatabase.from_uri(f"mysql+pymysql://{db_user}:{db_password}@{db_host}/{db_name}",
-                              sample_rows_in_table_info=3)
-    google_api_key = os.environ.get("GOOGLE_API_KEY")
-    llm = GooglePalm(google_api_key=google_api_key, temperature=0.1)
-
-    embeddings = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')
-    to_vectorize = [" ".join(example.values()) for example in few_shots]
-    
     try:
-        vectorstore = Chroma.from_texts(to_vectorize, embeddings, metadatas=few_shots)
-    except RuntimeError as e:
-        print(f"Error initializing Chroma vectorstore: {e}")
+        db = SQLDatabase.from_uri(f"mysql+pymysql://{db_user}:{db_password}@{db_host}/{db_name}",
+                                  sample_rows_in_table_info=3)
+    except Exception as e:
+        logging.error(f"Error initializing SQLDatabase: {e}")
+        return None
+    
+    google_api_key = os.environ.get("GOOGLE_API_KEY")
+    if not google_api_key:
+        logging.error("Google API key is missing.")
         return None
 
-    example_selector = SemanticSimilarityExampleSelector(
-        vectorstore=vectorstore,
-        k=2,
-    )
+    try:
+        llm = GooglePalm(google_api_key=google_api_key, temperature=0.1)
+    except Exception as e:
+        logging.error(f"Error initializing GooglePalm LLM: {e}")
+        return None
+
+    try:
+        embeddings = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')
+        to_vectorize = [" ".join(example.values()) for example in few_shots]
+        vectorstore = Chroma.from_texts(to_vectorize, embeddings, metadatas=few_shots)
+    except Exception as e:
+        logging.error(f"Error initializing Chroma vectorstore: {e}")
+        return None
+
+    try:
+        example_selector = SemanticSimilarityExampleSelector(
+            vectorstore=vectorstore,
+            k=2,
+        )
+    except Exception as e:
+        logging.error(f"Error initializing SemanticSimilarityExampleSelector: {e}")
+        return None
     
     mysql_prompt = """You are a MySQL expert. Given an input question, first create a syntactically correct MySQL query to run, then look at the results of the query and return the answer to the input question.
     Unless the user specifies in the question a specific number of examples to obtain, query for at most {top_k} results using the LIMIT clause as per MySQL. You can order the results to return the most informative data in the database.
@@ -67,12 +87,22 @@ def get_few_shot_db_chain():
         suffix=PROMPT_SUFFIX,
         input_variables=["input", "table_info", "top_k"],  # These variables are used in the prefix and suffix
     )
-    chain = SQLDatabaseChain.from_llm(llm, db, verbose=True, prompt=few_shot_prompt)
+
+    try:
+        chain = SQLDatabaseChain.from_llm(llm, db, verbose=True, prompt=few_shot_prompt)
+    except Exception as e:
+        logging.error(f"Error initializing SQLDatabaseChain: {e}")
+        return None
+
     return chain
 
 chain = get_few_shot_db_chain()
 if chain:
-    # Perform operations with the chain
-    pass
+    question = "Your question here"
+    try:
+        response = chain.run(question)
+        print(response)
+    except Exception as e:
+        logging.error(f"Error running the chain: {e}")
 else:
-    print("Failed to create the SQL database chain.")
+    logging.error("Failed to create the SQL database chain.")
