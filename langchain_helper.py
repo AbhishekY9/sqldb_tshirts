@@ -14,7 +14,6 @@ import os
 from dotenv import load_dotenv
 load_dotenv()  # take environment variables from .env (especially openai api key)
 
-
 def get_few_shot_db_chain():
     db_user = "sql12723901"
     db_password = "YsCnmTnKLW"
@@ -28,11 +27,18 @@ def get_few_shot_db_chain():
 
     embeddings = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')
     to_vectorize = [" ".join(example.values()) for example in few_shots]
-    vectorstore = Chroma.from_texts(to_vectorize, embeddings, metadatas=few_shots)
+    
+    try:
+        vectorstore = Chroma.from_texts(to_vectorize, embeddings, metadatas=few_shots)
+    except RuntimeError as e:
+        print(f"Error initializing Chroma vectorstore: {e}")
+        return None
+
     example_selector = SemanticSimilarityExampleSelector(
         vectorstore=vectorstore,
         k=2,
     )
+    
     mysql_prompt = """You are a MySQL expert. Given an input question, first create a syntactically correct MySQL query to run, then look at the results of the query and return the answer to the input question.
     Unless the user specifies in the question a specific number of examples to obtain, query for at most {top_k} results using the LIMIT clause as per MySQL. You can order the results to return the most informative data in the database.
     Never query for all columns from a table. You must query only the columns that are needed to answer the question. Wrap each column name in backticks (`) to denote them as delimited identifiers.
@@ -50,7 +56,7 @@ def get_few_shot_db_chain():
     """
 
     example_prompt = PromptTemplate(
-        input_variables=["Question", "SQLQuery", "SQLResult","Answer",],
+        input_variables=["Question", "SQLQuery", "SQLResult", "Answer"],
         template="\nQuestion: {Question}\nSQLQuery: {SQLQuery}\nSQLResult: {SQLResult}\nAnswer: {Answer}",
     )
 
@@ -59,8 +65,14 @@ def get_few_shot_db_chain():
         example_prompt=example_prompt,
         prefix=mysql_prompt,
         suffix=PROMPT_SUFFIX,
-        input_variables=["input", "table_info", "top_k"], #These variables are used in the prefix and suffix
+        input_variables=["input", "table_info", "top_k"],  # These variables are used in the prefix and suffix
     )
     chain = SQLDatabaseChain.from_llm(llm, db, verbose=True, prompt=few_shot_prompt)
     return chain
 
+chain = get_few_shot_db_chain()
+if chain:
+    # Perform operations with the chain
+    pass
+else:
+    print("Failed to create the SQL database chain.")
